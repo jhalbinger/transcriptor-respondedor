@@ -6,7 +6,6 @@ import os
 import openai
 
 app = Flask(__name__)
-
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 @app.route("/")
@@ -15,16 +14,21 @@ def index():
 
 @app.route("/transcripcion", methods=["POST"])
 def transcripcion():
-    data = request.get_json()
-    url_audio = data.get("url")
+    if request.content_type != "application/json":
+        return jsonify({"error": f"Tipo de contenido no soportado: {request.content_type}"}), 415
 
-    if not url_audio:
-        return jsonify({"error": "Falta la URL del audio"}), 400
+    data = request.get_json(silent=True)
+    if not data or "url" not in data:
+        return jsonify({"error": "Falta la URL del audio en formato JSON"}), 400
 
-    print(f"📥 Audio recibido y guardado como {url_audio}")
+    url_audio = data["url"]
+    print(f"📥 Audio recibido: {url_audio}")
+
+    ruta_ogg = None
+    ruta_mp3 = None
 
     try:
-        # Descargar el audio
+        # Descargar audio
         respuesta = requests.get(url_audio)
         if respuesta.status_code != 200:
             return jsonify({"error": "No se pudo descargar el audio"}), 400
@@ -33,14 +37,13 @@ def transcripcion():
             ogg_file.write(respuesta.content)
             ruta_ogg = ogg_file.name
 
-        print(f"🎧 Audio convertido a MP3")
-
         # Convertir a mp3
         sonido = AudioSegment.from_file(ruta_ogg)
         ruta_mp3 = ruta_ogg.replace(".ogg", ".mp3")
         sonido.export(ruta_mp3, format="mp3")
+        print(f"🎧 Audio convertido a {ruta_mp3}")
 
-        # Transcribir con Whisper
+        # Transcribir
         print("📤 Enviando a Whisper para transcripción...")
         with open(ruta_mp3, "rb") as f:
             transcript = openai.audio.transcriptions.create(
@@ -52,7 +55,7 @@ def transcripcion():
         texto_transcripto = transcript.strip()
         print(f"📝 Transcripción: {texto_transcripto}")
 
-        # Enviar a GPT vía microservicio orquestador
+        # Enviar a GPT vía orquestador
         print("🤖 Enviando transcripción a GPT para respuesta...")
         respuesta_gpt = requests.post(
             "https://orquestador-ms.onrender.com/webhook",
@@ -71,9 +74,9 @@ def transcripcion():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        if os.path.exists(ruta_ogg):
+        if ruta_ogg and os.path.exists(ruta_ogg):
             os.remove(ruta_ogg)
-        if os.path.exists(ruta_mp3):
+        if ruta_mp3 and os.path.exists(ruta_mp3):
             os.remove(ruta_mp3)
 
 if __name__ == "__main__":
