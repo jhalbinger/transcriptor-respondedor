@@ -28,7 +28,7 @@ def transcripcion():
     ruta_mp3 = None
 
     try:
-        # Descargar audio
+        # Descargar el audio
         respuesta = requests.get(url_audio)
         if respuesta.status_code != 200:
             return jsonify({"error": "No se pudo descargar el audio"}), 400
@@ -37,13 +37,13 @@ def transcripcion():
             ogg_file.write(respuesta.content)
             ruta_ogg = ogg_file.name
 
-        # Convertir a mp3
+        # Convertir a MP3
         sonido = AudioSegment.from_file(ruta_ogg)
         ruta_mp3 = ruta_ogg.replace(".ogg", ".mp3")
         sonido.export(ruta_mp3, format="mp3")
         print(f"🎧 Audio convertido a {ruta_mp3}")
 
-        # Transcribir
+        # Transcribir con Whisper
         print("📤 Enviando a Whisper para transcripción...")
         with open(ruta_mp3, "rb") as f:
             transcript = openai.audio.transcriptions.create(
@@ -55,18 +55,22 @@ def transcripcion():
         texto_transcripto = transcript.strip()
         print(f"📝 Transcripción: {texto_transcripto}")
 
-        # Enviar a GPT vía orquestador
+        # Enviar al orquestador
         print("🤖 Enviando transcripción a GPT para respuesta...")
         respuesta_gpt = requests.post(
-            "https://orquestador-ms.onrender.com/webhook",
-            json={"consulta": texto_transcripto}
+            "https://orquestador-ms.onrender.com/orquestador-ms",
+            json={
+                "consulta": texto_transcripto,
+                "motivo": "otro"
+            }
         )
 
         if respuesta_gpt.status_code != 200:
             print(f"⚠️ Error al contactar con GPT: {respuesta_gpt.text}")
             return jsonify({"error": "Fallo al contactar con GPT"}), 500
 
-        respuesta_final = respuesta_gpt.json().get("respuesta", "🤖 GPT no respondió.")
+        data = respuesta_gpt.json()
+        respuesta_final = data.get("respuesta_agente", "🤖 GPT no respondió.")
         return jsonify({"respuesta": respuesta_final})
 
     except Exception as e:
