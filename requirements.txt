@@ -1,6 +1,5 @@
 Flask
-openai
 pydub
+openai>=1.0.0
 gunicorn
-python-dotenv
 requests
