@@ -1,67 +1,80 @@
 from flask import Flask, request, jsonify
-from openai import OpenAI
+import requests
 from pydub import AudioSegment
 import tempfile
 import os
-import json
-import requests  # Esto también es necesario para llamar al microservicio GPT
-
-client = OpenAI()
+import openai
 
 app = Flask(__name__)
 
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 @app.route("/")
 def index():
-    return "🎙️ Microservicio transcriptor-respondedor activo"
+    return "🟢 Transcriptor-Respondedor funcionando"
 
 @app.route("/transcripcion", methods=["POST"])
 def transcripcion():
+    data = request.get_json()
+    url_audio = data.get("url")
+
+    if not url_audio:
+        return jsonify({"error": "Falta la URL del audio"}), 400
+
+    print(f"📥 Audio recibido y guardado como {url_audio}")
+
     try:
-        if 'audio' not in request.files:
-            print("⚠️ No se recibió archivo 'audio'")
-            return jsonify({"error": "No se envió el archivo de audio"}), 400
+        # Descargar el audio
+        respuesta = requests.get(url_audio)
+        if respuesta.status_code != 200:
+            return jsonify({"error": "No se pudo descargar el audio"}), 400
 
-        archivo_audio = request.files['audio']
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as ogg_file:
+            ogg_file.write(respuesta.content)
+            ruta_ogg = ogg_file.name
 
-        # Guardar temporalmente el archivo OGG
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as temp_ogg:
-            archivo_audio.save(temp_ogg.name)
-            print(f"📥 Audio recibido y guardado como {temp_ogg.name}")
+        print(f"🎧 Audio convertido a MP3")
 
-            # Convertir a MP3
-            audio = AudioSegment.from_file(temp_ogg.name)
-            temp_mp3_path = temp_ogg.name.replace(".ogg", ".mp3")
-            audio.export(temp_mp3_path, format="mp3")
-            print(f"🎧 Audio convertido a {temp_mp3_path}")
+        # Convertir a mp3
+        sonido = AudioSegment.from_file(ruta_ogg)
+        ruta_mp3 = ruta_ogg.replace(".ogg", ".mp3")
+        sonido.export(ruta_mp3, format="mp3")
 
-        # Transcripción con Whisper
-        with open(temp_mp3_path, "rb") as audio_file:
-            print("📤 Enviando a Whisper para transcripción...")
-            respuesta = client.audio.transcriptions.create(
+        # Transcribir con Whisper
+        print("📤 Enviando a Whisper para transcripción...")
+        with open(ruta_mp3, "rb") as f:
+            transcript = openai.audio.transcriptions.create(
                 model="whisper-1",
-                file=audio_file
+                file=f,
+                response_format="text"
             )
-        texto_transcripto = respuesta.text
-        print("📝 Transcripción:", texto_transcripto)
 
-        # Enviar ese texto al microservicio generador de respuestas
+        texto_transcripto = transcript.strip()
+        print(f"📝 Transcripción: {texto_transcripto}")
+
+        # Enviar a GPT vía microservicio orquestador
         print("🤖 Enviando transcripción a GPT para respuesta...")
         respuesta_gpt = requests.post(
-            "https://orquestador-ms.onrender.com/webhook",  # Cambiar por la URL de tu microservicio si se modifica
+            "https://orquestador-ms.onrender.com/webhook",
             json={"consulta": texto_transcripto}
         )
 
-        if respuesta_gpt.status_code == 200:
-            respuesta_final = respuesta_gpt.json().get("respuesta", "🤷 No entendí tu mensaje.")
-            return jsonify({"respuesta": respuesta_final})
-        else:
-            print("⚠️ Error al contactar con GPT:", respuesta_gpt.text)
-            return jsonify({"respuesta": "⚠️ Error al generar respuesta"}), 500
+        if respuesta_gpt.status_code != 200:
+            print(f"⚠️ Error al contactar con GPT: {respuesta_gpt.text}")
+            return jsonify({"error": "Fallo al contactar con GPT"}), 500
+
+        respuesta_final = respuesta_gpt.json().get("respuesta", "🤖 GPT no respondió.")
+        return jsonify({"respuesta": respuesta_final})
 
     except Exception as e:
-        print("❌ ERROR EN SERVIDOR:", e)
+        print(f"❌ Error general: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+    finally:
+        if os.path.exists(ruta_ogg):
+            os.remove(ruta_ogg)
+        if os.path.exists(ruta_mp3):
+            os.remove(ruta_mp3)
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run()
