@@ -14,30 +14,19 @@ def index():
 
 @app.route("/transcripcion", methods=["POST"])
 def transcripcion():
-    if request.content_type != "application/json":
-        return jsonify({"error": f"Tipo de contenido no soportado: {request.content_type}"}), 415
+    if "audio" not in request.files:
+        return jsonify({"error": "No se envió un archivo de audio"}), 400
 
-    data = request.get_json(silent=True)
-    if not data or "url" not in data:
-        return jsonify({"error": "Falta la URL del audio en formato JSON"}), 400
-
-    url_audio = data["url"]
-    print(f"📥 Audio recibido: {url_audio}")
-
+    archivo = request.files["audio"]
     ruta_ogg = None
     ruta_mp3 = None
 
     try:
-        # Descargar el audio
-        respuesta = requests.get(url_audio)
-        if respuesta.status_code != 200:
-            return jsonify({"error": "No se pudo descargar el audio"}), 400
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as f:
+            archivo.save(f)
+            ruta_ogg = f.name
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as ogg_file:
-            ogg_file.write(respuesta.content)
-            ruta_ogg = ogg_file.name
-
-        # Convertir a MP3
+        # Convertir a mp3
         sonido = AudioSegment.from_file(ruta_ogg)
         ruta_mp3 = ruta_ogg.replace(".ogg", ".mp3")
         sonido.export(ruta_mp3, format="mp3")
